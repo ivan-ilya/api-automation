@@ -25,12 +25,18 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Test
-        env:
-          ALLURE_RESULTS_DIRECTORY: ${{ github.workspace }}/allure-results
         run: |
           dotnet test --no-build \
             --logger "trx;LogFileName=TestResults.trx" \
             --results-directory ./test-results
+
+      - name: Collect allure results
+        if: always()
+        run: |
+          mkdir -p allure-results
+          find . -path "*/allure-results/*" -name "*.json" -exec cp {} allure-results/ \;
+          find . -path "*/allure-results/*" -name "*attachment*" -exec cp {} allure-results/ \;
+          echo "Found $(ls allure-results/ | wc -l) allure result files"
 
       - name: Upload allure results
         if: always()
@@ -38,11 +44,6 @@ jobs:
         with:
           name: allure-results
           path: allure-results/
-          if-no-files-found: warn
-
-      - name: Debug - find allure results
-        if: always()
-        run: find / -name "*-result.json" -o -name "allure-results" -type d 2>/dev/null | head -20
 
       - name: Upload test results
         if: always()

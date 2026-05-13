@@ -25,6 +25,8 @@ jobs:
         run: dotnet build --no-restore
 
       - name: Test
+        env:
+          ALLURE_RESULTS_DIRECTORY: ${{ github.workspace }}/allure-results
         run: |
           dotnet test --no-build \
             --logger "trx;LogFileName=TestResults.trx" \
@@ -36,6 +38,11 @@ jobs:
         with:
           name: allure-results
           path: allure-results/
+          if-no-files-found: warn
+
+      - name: Debug - find allure results
+        if: always()
+        run: find / -name "*-result.json" -o -name "allure-results" -type d 2>/dev/null | head -20
 
       - name: Upload test results
         if: always()

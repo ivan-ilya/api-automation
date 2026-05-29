@@ -2,6 +2,10 @@
 
 REST API test automation framework built on .NET 10 using xUnit, RestSharp, and Allure for reporting.
 
+> **Note on .NET version:** This project targets .NET 10 (current LTS, supported until November 2028).
+> The framework is fully compatible with .NET 6/8 — simply change `TargetFramework` in `.csproj` files
+> and the container image tag in the CI workflow to target the version approved by your team.
+
 ## Project Structure
 
 ```
@@ -18,13 +22,17 @@ REST API test automation framework built on .NET 10 using xUnit, RestSharp, and 
 ├── tests/
 │   └── ApiAutomation.Tests/          # Test project
 │       ├── Tests/
-│       │   └── EndToEndTests.cs      # E2E tests (login, CRUD players)
+│       │   ├── EndToEndTests.cs      # E2E tests (login, CRUD players)
+│       │   └── NegativeTests.cs      # Negative scenarios (401, 403, 404)
 │       ├── Services/
 │       │   └── PlayerApiService.cs   # Test state preparation service
 │       ├── TestData/
 │       │   └── PlayerFaker.cs        # Test data generation (Bogus)
-│       └── FakeHttpHandler.cs        # Mock HTTP handler for isolated tests
-├── .gitlab-ci.yml                    # CI pipeline (test → report → pages)
+│       ├── FakeHttpHandler.cs        # Mock HTTP handler for isolated tests
+│       └── appsettings.test.json     # Test configuration (URL, credentials, mock toggle)
+├── .github/
+│   └── workflows/
+│       └── test.yml                  # GitHub Actions CI pipeline
 └── ApiAutomation.sln                 # Solution file
 ```
 
@@ -38,11 +46,39 @@ REST API test automation framework built on .NET 10 using xUnit, RestSharp, and 
 | Test data | Bogus | Fake data generation |
 | Property-based testing | FsCheck.Xunit | Invariant verification |
 | Reporting | Allure.Xunit | Allure reports |
-| CI | GitLab CI + Docker | Automated execution |
+| Configuration | Microsoft.Extensions.Configuration | Environment-based settings |
+| CI | GitHub Actions | Automated execution & Allure Pages |
+
+## Configuration
+
+Tests are configured via `appsettings.test.json` and environment variables:
+
+```json
+{
+  "Api": {
+    "BaseUrl": "https://api.example.com",
+    "Username": "tester",
+    "Password": "secret",
+    "UseMocks": true
+  }
+}
+```
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `Api:BaseUrl` | Target API base URL | `http://localhost` |
+| `Api:Username` | Login username | — |
+| `Api:Password` | Login password | — |
+| `Api:UseMocks` | Use FakeHttpHandler instead of real HTTP | `true` |
+
+Environment variables override JSON config using the standard `Api__BaseUrl` convention.
+
+When `UseMocks=true` (default), tests run offline using `FakeHttpHandler`.
+Set `UseMocks=false` and provide real credentials to run against a live server.
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (or .NET 8 — see note above)
 
 ## Running Tests
 
@@ -63,6 +99,9 @@ dotnet test --verbosity normal
 
 # Run a specific test
 dotnet test --filter "Login_ReturnsValidToken"
+
+# Run against real API
+Api__BaseUrl=https://real-api.example.com Api__UseMocks=false dotnet test
 ```
 
 ### Allure Report (locally)
@@ -78,13 +117,46 @@ allure open allure-report
 
 ## CI/CD
 
-The GitLab CI pipeline consists of three stages:
+The GitHub Actions pipeline (`.github/workflows/test.yml`) consists of three jobs:
 
-1. **test** — build and run tests inside `mcr.microsoft.com/dotnet/sdk:10.0` Docker container
-2. **report** — generate Allure report
-3. **pages** — publish report to GitLab Pages (`main` branch only)
+1. **test** — build and run tests inside `mcr.microsoft.com/dotnet/sdk:10.0` container
+2. **allure-report** — generate Allure report from test results
+3. **pages** — publish report to GitHub Pages (`main` branch only)
 
-Tests run automatically on every push.
+Tests run automatically on every push and pull request.
+
+## Test Strategy
+
+### Positive Tests (EndToEndTests)
+- Login → valid token
+- Create 12 players → each returns 201 with valid ID
+- Get player by ID → correct data
+- Get all players sorted → alphabetical order
+- Delete players → success
+
+### Negative Tests (NegativeTests)
+- Login with invalid credentials → 401 Unauthorized
+- Create player without auth token → 401 Unauthorized
+- Get player with unknown ID → 404 Not Found
+- Delete already-deleted player → 404 Not Found
+
+### Schema Validation
+Response models are strongly typed (`Player`, `PlayerResponse`, `LoginResponse`).
+Tests validate:
+- Required fields are present and non-null
+- Field types match expected schema (e.g., `Id` is a valid GUID string)
+- Response structure matches API documentation
+
+### Cleanup Strategy
+
+In mock mode, each test is fully isolated — `FakeHttpHandler` provides deterministic responses
+and no shared state exists between tests.
+
+In a real API scenario, the framework supports a cleanup pattern:
+- Created resource IDs are tracked in a `List<string>` within the test class
+- `Dispose()` deletes all tracked resources in a finally/teardown block
+- This ensures no orphaned test data remains after test execution
+- Tests use `IDisposable` to guarantee cleanup even on failure
 
 ## Adding a New Test
 
@@ -118,7 +190,7 @@ Tests run without a real server. `FakeHttpHandler` replaces the HTTP transport l
 - Testing client logic in isolation
 - Having predictable and fast tests
 
-To switch to a real server — remove `FakeHttpHandler` from the `PlayerApiClient` constructor and pass a real base URL.
+To switch to a real server — set `UseMocks=false` in `appsettings.test.json` or via environment variable.
 
 ## Updating Dependencies
 
@@ -130,4 +202,4 @@ dotnet list package --outdated
 dotnet add tests/ApiAutomation.Tests package FluentAssertions
 ```
 
-When upgrading the .NET SDK — update `TargetFramework` in `.csproj` files and the image tag in `.gitlab-ci.yml`.
+When upgrading the .NET SDK — update `TargetFramework` in `.csproj` files and the container image tag in `.github/workflows/test.yml`.
